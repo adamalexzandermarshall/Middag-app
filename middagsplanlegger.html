@@ -176,6 +176,14 @@ body { font-family: "Roboto", sans-serif; background: var(--cream); color: var(-
   .recipe-btn-inline { padding: 4px 0; }
 }
 
+
+.settings-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.settings-note { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.input-mono { font-family: monospace; font-size: 12px; }
+.publish-status { font-size: 12px; margin-left: 8px; color: var(--muted); vertical-align: middle; }
+.publish-status.ok { color: var(--sage); }
+.publish-status.err { color: var(--red); }
+
 </style>
 </head>
 <body>
@@ -201,7 +209,9 @@ body { font-family: "Roboto", sans-serif; background: var(--cream); color: var(-
     <div class="toolbar">
       <button class="btn-primary" id="btn-generate" onclick="generateWeek()">Generer ny uke ↻</button>
       <button class="btn-secondary" onclick="shareWeek()">Del ukeplan</button>
-      <button class="btn-secondary" onclick="exportHTML()" title="Last ned oppdatert HTML med alle dine endringer">⬇ Lagre fil</button>
+      <button class="btn-secondary" onclick="exportHTML()">⬇ Lagre fil</button>
+      <button class="btn-secondary" id="btn-publish" onclick="publishToGitHub()" title="Publiser til GitHub">↑ Publiser</button>
+      <button class="btn-icon" onclick="showSettings()" title="Innstillinger">⚙</button>
     </div>
     <div class="fridge-bar">
       <span style="font-weight:500;white-space:nowrap;">På kjøkkenet:</span>
@@ -549,7 +559,150 @@ function deleteDish(type,id){
 }
 
 
-function exportHTML() {
+// ── SETTINGS ────────────────────────────────────────────────
+function showSettings() {
+  const saved = getSettings();
+  document.getElementById("modal-content").innerHTML = `
+    <h3>⚙ Innstillinger</h3>
+    <div class="modal-sub">GitHub-integrasjon for automatisk synkronisering</div>
+
+    <div class="settings-row" style="margin-top:1rem">
+      <label class="form-label">GitHub brukernavn</label>
+      <input class="form-input" id="s-user" placeholder="f.eks. adamalexzandermarshall" value="${saved.user}">
+    </div>
+    <div class="settings-row">
+      <label class="form-label">Repository-navn</label>
+      <input class="form-input" id="s-repo" placeholder="f.eks. Middag-app" value="${saved.repo}">
+    </div>
+    <div class="settings-row">
+      <label class="form-label">Filnavn i repo</label>
+      <input class="form-input" id="s-file" placeholder="index.html" value="${saved.file||'index.html'}">
+    </div>
+    <div class="settings-row">
+      <label class="form-label">Personal Access Token</label>
+      <input class="form-input input-mono" id="s-token" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" value="${saved.token}">
+      <div class="settings-note">Opprett under GitHub → Settings → Developer settings → Personal access tokens (classic). Trenger kun <strong>repo</strong>-tilgang. Lagres kun lokalt i denne nettleseren.</div>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn-primary" onclick="saveSettings()">Lagre innstillinger</button>
+      <button class="btn-secondary" onclick="closeModal()">Avbryt</button>
+    </div>`;
+  openModal();
+}
+
+function getSettings() {
+  try {
+    return JSON.parse(localStorage.getItem('gh_settings')||'{}');
+  } catch(e) { return {}; }
+}
+
+function saveSettings() {
+  const s = {
+    user:  document.getElementById('s-user').value.trim(),
+    repo:  document.getElementById('s-repo').value.trim(),
+    file:  document.getElementById('s-file').value.trim() || 'index.html',
+    token: document.getElementById('s-token').value.trim(),
+  };
+  localStorage.setItem('gh_settings', JSON.stringify(s));
+  closeModal();
+  showToast('Innstillinger lagret ✓');
+}
+
+// ── TOAST ────────────────────────────────────────────────────
+function showToast(msg, isError) {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:#1E2218;color:white;padding:10px 20px;border-radius:8px;font-size:13px;z-index:200;transition:opacity 0.3s;box-shadow:0 2px 12px rgba(0,0,0,0.3);';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.background = isError ? '#C0392B' : '#1E2218';
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.opacity = '0'; }, 3000);
+}
+
+// ── GITHUB PUBLISH ───────────────────────────────────────────
+async function publishToGitHub() {
+  const s = getSettings();
+  if (!s.user || !s.repo || !s.token) {
+    showSettings();
+    showToast('Fyll inn GitHub-innstillinger først', true);
+    return;
+  }
+
+  const btn = document.getElementById('btn-publish');
+  btn.disabled = true;
+  btn.textContent = '↑ Publiserer...';
+
+  try {
+    const content = buildUpdatedHTML();
+    const b64 = btoa(unescape(encodeURIComponent(content)));
+    const filename = s.file || 'index.html';
+    const apiBase = `https://api.github.com/repos/${s.user}/${s.repo}/contents/${filename}`;
+    const headers = {
+      'Authorization': `token ${s.token}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/vnd.github.v3+json'
+    };
+
+    // Get current SHA (needed for update)
+    let sha = '';
+    try {
+      const getRes = await fetch(apiBase, { headers });
+      if (getRes.ok) {
+        const data = await getRes.json();
+        sha = data.sha;
+      }
+    } catch(e) {}
+
+    const body = {
+      message: `Oppdatert middagsplan ${new Date().toLocaleDateString('no-NO')}`,
+      content: b64,
+    };
+    if (sha) body.sha = sha;
+
+    const putRes = await fetch(apiBase, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(body)
+    });
+
+    if (putRes.ok) {
+      showToast('Publisert! Cathrine ser oppdateringen om ~60 sek ✓');
+    } else {
+      const err = await putRes.json();
+      showToast('Feil: ' + (err.message || putRes.status), true);
+    }
+  } catch(e) {
+    showToast('Nettverksfeil — sjekk token og repo-navn', true);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '↑ Publiser';
+}
+
+// ── BUILD UPDATED HTML ───────────────────────────────────────
+function buildUpdatedHTML() {
+  let src = document.documentElement.outerHTML;
+  src = src.replace(
+    /let adultDishes\s*=\s*\[[\s\S]*?\];(?=\s*\n)/,
+    'let adultDishes = ' + JSON.stringify(adultDishes) + ';'
+  );
+  src = src.replace(
+    /let kidDishes\s*=\s*\[[\s\S]*?\];(?=\s*\n)/,
+    'let kidDishes = ' + JSON.stringify(kidDishes) + ';'
+  );
+  return src;
+}
+
+// ── EXPORT (keep for backup) ─────────────────────────────────
+
+// ── END OF INJECTED FUNCTIONS ──
+function _dead() {
   // Serialise current dish data
   const adultJSON = JSON.stringify(adultDishes);
   const kidJSON   = JSON.stringify(kidDishes);
@@ -568,6 +721,157 @@ function exportHTML() {
   );
 
   const blob = new Blob([src], {type: 'text/html'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'middagsplanlegger.html';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── SETTINGS ────────────────────────────────────────────────
+function showSettings() {
+  const saved = getSettings();
+  document.getElementById("modal-content").innerHTML = `
+    <h3>⚙ Innstillinger</h3>
+    <div class="modal-sub">GitHub-integrasjon for automatisk synkronisering</div>
+
+    <div class="settings-row" style="margin-top:1rem">
+      <label class="form-label">GitHub brukernavn</label>
+      <input class="form-input" id="s-user" placeholder="f.eks. adamalexzandermarshall" value="${saved.user}">
+    </div>
+    <div class="settings-row">
+      <label class="form-label">Repository-navn</label>
+      <input class="form-input" id="s-repo" placeholder="f.eks. Middag-app" value="${saved.repo}">
+    </div>
+    <div class="settings-row">
+      <label class="form-label">Filnavn i repo</label>
+      <input class="form-input" id="s-file" placeholder="index.html" value="${saved.file||'index.html'}">
+    </div>
+    <div class="settings-row">
+      <label class="form-label">Personal Access Token</label>
+      <input class="form-input input-mono" id="s-token" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" value="${saved.token}">
+      <div class="settings-note">Opprett under GitHub → Settings → Developer settings → Personal access tokens (classic). Trenger kun <strong>repo</strong>-tilgang. Lagres kun lokalt i denne nettleseren.</div>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn-primary" onclick="saveSettings()">Lagre innstillinger</button>
+      <button class="btn-secondary" onclick="closeModal()">Avbryt</button>
+    </div>`;
+  openModal();
+}
+
+function getSettings() {
+  try {
+    return JSON.parse(localStorage.getItem('gh_settings')||'{}');
+  } catch(e) { return {}; }
+}
+
+function saveSettings() {
+  const s = {
+    user:  document.getElementById('s-user').value.trim(),
+    repo:  document.getElementById('s-repo').value.trim(),
+    file:  document.getElementById('s-file').value.trim() || 'index.html',
+    token: document.getElementById('s-token').value.trim(),
+  };
+  localStorage.setItem('gh_settings', JSON.stringify(s));
+  closeModal();
+  showToast('Innstillinger lagret ✓');
+}
+
+// ── TOAST ────────────────────────────────────────────────────
+function showToast(msg, isError) {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:#1E2218;color:white;padding:10px 20px;border-radius:8px;font-size:13px;z-index:200;transition:opacity 0.3s;box-shadow:0 2px 12px rgba(0,0,0,0.3);';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.background = isError ? '#C0392B' : '#1E2218';
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.opacity = '0'; }, 3000);
+}
+
+// ── GITHUB PUBLISH ───────────────────────────────────────────
+async function publishToGitHub() {
+  const s = getSettings();
+  if (!s.user || !s.repo || !s.token) {
+    showSettings();
+    showToast('Fyll inn GitHub-innstillinger først', true);
+    return;
+  }
+
+  const btn = document.getElementById('btn-publish');
+  btn.disabled = true;
+  btn.textContent = '↑ Publiserer...';
+
+  try {
+    const content = buildUpdatedHTML();
+    const b64 = btoa(unescape(encodeURIComponent(content)));
+    const filename = s.file || 'index.html';
+    const apiBase = `https://api.github.com/repos/${s.user}/${s.repo}/contents/${filename}`;
+    const headers = {
+      'Authorization': `token ${s.token}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/vnd.github.v3+json'
+    };
+
+    // Get current SHA (needed for update)
+    let sha = '';
+    try {
+      const getRes = await fetch(apiBase, { headers });
+      if (getRes.ok) {
+        const data = await getRes.json();
+        sha = data.sha;
+      }
+    } catch(e) {}
+
+    const body = {
+      message: `Oppdatert middagsplan ${new Date().toLocaleDateString('no-NO')}`,
+      content: b64,
+    };
+    if (sha) body.sha = sha;
+
+    const putRes = await fetch(apiBase, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(body)
+    });
+
+    if (putRes.ok) {
+      showToast('Publisert! Cathrine ser oppdateringen om ~60 sek ✓');
+    } else {
+      const err = await putRes.json();
+      showToast('Feil: ' + (err.message || putRes.status), true);
+    }
+  } catch(e) {
+    showToast('Nettverksfeil — sjekk token og repo-navn', true);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '↑ Publiser';
+}
+
+// ── BUILD UPDATED HTML ───────────────────────────────────────
+function buildUpdatedHTML() {
+  let src = document.documentElement.outerHTML;
+  src = src.replace(
+    /let adultDishes\s*=\s*\[[\s\S]*?\];(?=\s*\n)/,
+    'let adultDishes = ' + JSON.stringify(adultDishes) + ';'
+  );
+  src = src.replace(
+    /let kidDishes\s*=\s*\[[\s\S]*?\];(?=\s*\n)/,
+    'let kidDishes = ' + JSON.stringify(kidDishes) + ';'
+  );
+  return src;
+}
+
+// ── EXPORT (keep for backup) ─────────────────────────────────
+function exportHTML() {
+  const content = buildUpdatedHTML();
+  const blob = new Blob([content], {type: 'text/html'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'middagsplanlegger.html';
