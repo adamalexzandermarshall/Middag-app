@@ -209,6 +209,7 @@ body { font-family: "Roboto", sans-serif; background: var(--cream); color: var(-
     <div class="toolbar">
       <button class="btn-primary" id="btn-generate" onclick="generateWeek()">Generer ny uke ↻</button>
       <button class="btn-secondary" onclick="shareWeek()">Del ukeplan</button>
+      <button class="btn-secondary" onclick="shareAsImage()">📷 Del som bilde</button>
       <button class="btn-secondary" onclick="exportHTML()">⬇ Lagre fil</button>
       <button class="btn-secondary" id="btn-publish" onclick="publishToGitHub()" title="Publiser til GitHub">↑ Publiser</button>
       <button class="btn-icon" onclick="showSettings()" title="Innstillinger">⚙</button>
@@ -929,6 +930,226 @@ function exportHTML() {
   a.download = 'middagsplanlegger.html';
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+// ── SHARE AS IMAGE ───────────────────────────────────────────
+function shareAsImage() {
+  const canvas = document.createElement('canvas');
+  const dpr = 2; // retina
+  const W = 900, HEADER = 90, DAY_H = 148, PAD = 18, GAP = 10;
+  const COLS = 4;
+  const ROWS = Math.ceil(7 / COLS); // 2 rows: 4+3
+  const H = HEADER + ROWS * (DAY_H + GAP) + PAD * 2;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  // Background
+  ctx.fillStyle = '#F7F4EF';
+  ctx.fillRect(0, 0, W, H);
+
+  // Header bar
+  ctx.fillStyle = '#4A6741';
+  ctx.fillRect(0, 0, W, HEADER);
+
+  // Load avatar images
+  const cImg = new Image(); cImg.src = C_IMG;
+  const aImg = new Image(); aImg.src = A_IMG;
+  const xImg = new Image(); xImg.src = X_IMG;
+
+  const drawAll = () => {
+    ctx.fillStyle = '#4A6741';
+    ctx.fillRect(0, 0, W, HEADER);
+
+    // Header title
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 22px Roboto, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('Ukens middagsplan — Marshall-Golf', PAD + 14, 38);
+
+    // Header subtitle - date range
+    const firstDay = currentWeek[0];
+    const lastDay = currentWeek[6];
+    const MONTHS = ['jan','feb','mar','apr','mai','jun','jul','aug','sep','okt','nov','des'];
+    const dateRange = `${firstDay.date.getDate()}. ${MONTHS[firstDay.date.getMonth()]} – ${lastDay.date.getDate()}. ${MONTHS[lastDay.date.getMonth()]}`;
+    ctx.font = '14px Roboto, sans-serif';
+    ctx.fillStyle = '#C5D4C0';
+    ctx.fillText(dateRange, PAD + 14, 62);
+
+    // Draw avatars in header
+    const avatarY = HEADER/2;
+    [[cImg,'C'],[aImg,'A'],[xImg,'X']].forEach(([im, label], i) => {
+      const ax = W - PAD - 36 - i * 46;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(ax, avatarY, 18, 0, Math.PI*2);
+      ctx.clip();
+      try { ctx.drawImage(im, ax-18, avatarY-18, 36, 36); }
+      catch(e) {}
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(ax, avatarY, 18, 0, Math.PI*2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    });
+
+    const DAYS_NO = ['Søn','Man','Tir','Ons','Tor','Fre','Lør'];
+    const MONTHS_FULL = ['januar','februar','mars','april','mai','juni','juli','august','september','oktober','november','desember'];
+    const colW = (W - PAD*2 - GAP*3) / COLS;
+
+    currentWeek.forEach((day, i) => {
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      const x = PAD + col * (colW + GAP);
+      const y = HEADER + PAD + row * (DAY_H + GAP);
+      const isToday = day.isToday;
+      const p = presence[day.offset];
+
+      // Card background
+      ctx.fillStyle = '#FFFFFF';
+      roundRect(ctx, x, y, colW, DAY_H, 10);
+      ctx.fill();
+
+      // Today highlight border
+      if (isToday) {
+        ctx.strokeStyle = '#4A6741';
+        ctx.lineWidth = 2;
+        roundRect(ctx, x, y, colW, DAY_H, 10);
+        ctx.stroke();
+      }
+
+      // Day name
+      ctx.fillStyle = '#7A8070';
+      ctx.font = 'bold 11px Roboto, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(DAYS_NO[day.dayIdx].toUpperCase(), x+10, y+18);
+
+      // Date
+      ctx.fillStyle = '#7A8070';
+      ctx.font = '10px Roboto, sans-serif';
+      ctx.fillText(`${day.date.getDate()}. ${MONTHS_FULL[day.date.getMonth()]}`, x+10, y+30);
+
+      // Presence dots
+      const pdots = [];
+      if (!p.cathrine) pdots.push({img: cImg, label: 'C'});
+      if (!p.adam) pdots.push({img: aImg, label: 'A'});
+      if (pdots.length > 0) {
+        pdots.forEach((pd, pi) => {
+          const dotX = x + colW - 12 - pi * 18;
+          ctx.save();
+          ctx.globalAlpha = 0.3;
+          ctx.beginPath();
+          ctx.arc(dotX, y+16, 8, 0, Math.PI*2);
+          ctx.clip();
+          try { ctx.drawImage(pd.img, dotX-8, y+8, 16, 16); }
+          catch(e) {}
+          ctx.restore();
+        });
+      }
+
+      // Divider after day header
+      ctx.strokeStyle = '#EBF0E8';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x+8, y+37); ctx.lineTo(x+colW-8, y+37);
+      ctx.stroke();
+
+      // Adult meal name - wrap text
+      ctx.fillStyle = '#1E2218';
+      ctx.font = '500 13px Roboto Slab, serif';
+      const adultLines = wrapText(ctx, day.adult.name, colW - 20);
+      adultLines.slice(0,2).forEach((line, li) => {
+        ctx.fillText(line, x+10, y+52+li*16);
+      });
+
+      // Adult tags
+      const tagY = y + 52 + Math.min(adultLines.length, 2)*16 + 2;
+      let tagX = x + 10;
+      day.adult.tags.filter(t=>['fisk','vegetar','frys'].includes(t)).forEach(t => {
+        const tagW = ctx.measureText(t).width + 12;
+        const tColor = t==='fisk'?'#E8F0F7':t==='vegetar'?'#EBF0E8':'#FDF3E3';
+        const tText = t==='fisk'?'#2A5275':t==='vegetar'?'#3A5C32':'#7A4F0D';
+        ctx.fillStyle = tColor;
+        roundRect(ctx, tagX, tagY, tagW, 14, 7);
+        ctx.fill();
+        ctx.fillStyle = tText;
+        ctx.font = '9px Roboto, sans-serif';
+        ctx.fillText(t, tagX+6, tagY+10);
+        tagX += tagW + 4;
+      });
+
+      // Divider
+      ctx.strokeStyle = '#EBF0E8';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x+8, y+DAY_H-42); ctx.lineTo(x+colW-8, y+DAY_H-42);
+      ctx.stroke();
+
+      // Kid section
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x+18, y+DAY_H-28, 9, 0, Math.PI*2);
+      ctx.clip();
+      try { ctx.drawImage(xImg, x+9, y+DAY_H-37, 18, 18); }
+      catch(e) {}
+      ctx.restore();
+
+      ctx.fillStyle = '#7A8070';
+      ctx.font = '11px Roboto, sans-serif';
+      const kidLine = day.kid.name.length > 22 ? day.kid.name.slice(0,20)+'…' : day.kid.name;
+      ctx.fillText(kidLine, x+32, y+DAY_H-22);
+    });
+
+    // Footer
+    ctx.fillStyle = '#C5D4C0';
+    ctx.font = '10px Roboto, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Marshall-Golf middagsplan', W/2, H-6);
+
+    // Download
+    const link = document.createElement('a');
+    link.download = `middag-${new Date().toISOString().slice(0,10)}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    showToast('Bilde lastet ned! Del det i Facebook Messenger 📷');
+  };
+
+  // Wait for images to load
+  let loaded = 0;
+  const total = 3;
+  const onLoad = () => { if(++loaded >= total) drawAll(); };
+  [cImg, aImg, xImg].forEach(im => {
+    if (im.complete) onLoad();
+    else { im.onload = onLoad; im.onerror = onLoad; }
+  });
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y); ctx.arcTo(x+w, y, x+w, y+r, r);
+  ctx.lineTo(x+w, y+h-r); ctx.arcTo(x+w, y+h, x+w-r, y+h, r);
+  ctx.lineTo(x+r, y+h); ctx.arcTo(x, y+h, x, y+h-r, r);
+  ctx.lineTo(x, y+r); ctx.arcTo(x, y, x+r, y, r);
+  ctx.closePath();
+}
+
+function wrapText(ctx, text, maxW) {
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  words.forEach(w => {
+    const test = line ? line+' '+w : w;
+    if (ctx.measureText(test).width > maxW - 10 && line) {
+      lines.push(line); line = w;
+    } else line = test;
+  });
+  if (line) lines.push(line);
+  return lines;
 }
 
 function openModal(){document.getElementById("modal-bg").classList.add("open");}
