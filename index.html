@@ -687,7 +687,18 @@ async function publishToGitHub() {
 
 // ── BUILD UPDATED HTML ───────────────────────────────────────
 function buildUpdatedHTML() {
+  // Save settings temporarily without token
+  const s = getSettings();
+  const tokenBackup = s.token;
+  // Remove token from localStorage before capturing HTML
+  localStorage.setItem('gh_settings', JSON.stringify({...s, token: ''}));
+
   let src = document.documentElement.outerHTML;
+
+  // Restore token in localStorage immediately
+  localStorage.setItem('gh_settings', JSON.stringify(s));
+
+  // Bake in latest dish data
   src = src.replace(
     /let adultDishes\s*=\s*\[[\s\S]*?\];(?=\s*\n)/,
     'let adultDishes = ' + JSON.stringify(adultDishes) + ';'
@@ -696,6 +707,21 @@ function buildUpdatedHTML() {
     /let kidDishes\s*=\s*\[[\s\S]*?\];(?=\s*\n)/,
     'let kidDishes = ' + JSON.stringify(kidDishes) + ';'
   );
+
+  // Belt-and-braces: strip any token that may have leaked into the HTML
+  src = src.replace(
+    /("token"\s*:\s*")[^"]{10,}(")/g,
+    '$1$2'
+  );
+  src = src.replace(
+    /ghp_[A-Za-z0-9]{30,}/g,
+    ''
+  );
+  src = src.replace(
+    /github_pat_[A-Za-z0-9_]{50,}/g,
+    ''
+  );
+
   return src;
 }
 
@@ -856,7 +882,18 @@ async function publishToGitHub() {
 
 // ── BUILD UPDATED HTML ───────────────────────────────────────
 function buildUpdatedHTML() {
+  // Save settings temporarily without token
+  const s = getSettings();
+  const tokenBackup = s.token;
+  // Remove token from localStorage before capturing HTML
+  localStorage.setItem('gh_settings', JSON.stringify({...s, token: ''}));
+
   let src = document.documentElement.outerHTML;
+
+  // Restore token in localStorage immediately
+  localStorage.setItem('gh_settings', JSON.stringify(s));
+
+  // Bake in latest dish data
   src = src.replace(
     /let adultDishes\s*=\s*\[[\s\S]*?\];(?=\s*\n)/,
     'let adultDishes = ' + JSON.stringify(adultDishes) + ';'
@@ -865,6 +902,21 @@ function buildUpdatedHTML() {
     /let kidDishes\s*=\s*\[[\s\S]*?\];(?=\s*\n)/,
     'let kidDishes = ' + JSON.stringify(kidDishes) + ';'
   );
+
+  // Belt-and-braces: strip any token that may have leaked into the HTML
+  src = src.replace(
+    /("token"\s*:\s*")[^"]{10,}(")/g,
+    '$1$2'
+  );
+  src = src.replace(
+    /ghp_[A-Za-z0-9]{30,}/g,
+    ''
+  );
+  src = src.replace(
+    /github_pat_[A-Za-z0-9_]{50,}/g,
+    ''
+  );
+
   return src;
 }
 
